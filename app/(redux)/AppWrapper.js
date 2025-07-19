@@ -23,6 +23,11 @@ const AppWrapper = () => {
         options={{ headerShown: false }}
       />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="fare-request" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="student-verification"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 };

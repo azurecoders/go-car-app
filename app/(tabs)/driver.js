@@ -37,9 +37,10 @@ export default function DriverRideRequests() {
           dropoffLocation: data.dropoffLocation,
           userName: data.userName,
           userPhone: data.userPhone,
+          femaleDriverOnly: data.femaleDriverOnly,
+          driverGender: data.driverGender,
+          fare: data.fare,
         };
-
-        console.log("data", newRide);
 
         setRideRequests((prevRides) => [newRide, ...prevRides]);
 
@@ -57,20 +58,6 @@ export default function DriverRideRequests() {
     }
   }, [driver]);
 
-  const formatLocation = (location) => {
-    if (typeof location === "string") return location;
-
-    if (
-      location &&
-      typeof location.lat === "number" &&
-      typeof location.lng === "number"
-    ) {
-      return `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
-    }
-
-    return "Location not available";
-  };
-
   const handleSetPrice = (ride) => {
     setSelectedRide(ride);
     setProposedFare("");
@@ -84,17 +71,20 @@ export default function DriverRideRequests() {
     }
 
     try {
-      const response = await fetch("/api/ride-price-proposal", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          rideId: selectedRide.id,
-          driverId: driver.id,
-          proposedFare: parseFloat(proposedFare),
-        }),
-      });
+      const response = await fetch(
+        "https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rides/ride-price-proposal",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            rideId: selectedRide.id,
+            driverId: driver.id,
+            fare: parseFloat(proposedFare),
+          }),
+        }
+      );
 
       if (response.ok) {
         // Remove the ride from requests after submitting price
@@ -139,10 +129,20 @@ export default function DriverRideRequests() {
       <View style={styles.rideHeader}>
         <Text style={styles.rideId}>#{ride.id}</Text>
       </View>
+      <View style={styles.estimatedFareHeader}>
+        <Text style={styles.rideId}>
+          <Text style={{ fontWeight: "bold" }}>Estimated Fare:</Text>{" "}
+          {ride.fare} PKR
+        </Text>
+      </View>
 
       <View style={styles.userInfo}>
-        <Text style={styles.userName}>{ride.userName}</Text>
-        <Text style={styles.userPhone}>{ride.userPhone}</Text>
+        <Text style={styles.userName}>
+          <Text style={{ fontWeight: "bold" }}>Name:</Text> {ride.userName}
+        </Text>
+        <Text style={styles.userPhone}>
+          <Text style={{ fontWeight: "bold" }}>Phone:</Text> {ride.userPhone}
+        </Text>
       </View>
 
       <View style={styles.locationContainer}>
@@ -151,7 +151,7 @@ export default function DriverRideRequests() {
           <View style={styles.locationInfo}>
             <Text style={styles.locationLabel}>Pickup</Text>
             <Text style={styles.locationText}>
-              {formatLocation(ride.pickupLocation)}
+              {ride.pickupLocation.address}
             </Text>
           </View>
         </View>
@@ -163,7 +163,7 @@ export default function DriverRideRequests() {
           <View style={styles.locationInfo}>
             <Text style={styles.locationLabel}>Dropoff</Text>
             <Text style={styles.locationText}>
-              {formatLocation(ride.dropoffLocation)}
+              {ride.dropoffLocation.address}
             </Text>
           </View>
         </View>
@@ -177,7 +177,13 @@ export default function DriverRideRequests() {
           <Text style={styles.rejectButtonText}>Reject</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.setPriceButton}
+          style={[
+            styles.setPriceButton,
+            ride.femaleDriverOnly &&
+              ride.driverGender !== "female" &&
+              styles.setPriceButtonDisabled,
+          ]}
+          disabled={ride.femaleDriverOnly && ride.driverGender !== "female"}
           onPress={() => handleSetPrice(ride)}
         >
           <Text style={styles.setPriceButtonText}>Set Price</Text>
@@ -302,6 +308,15 @@ const styles = StyleSheet.create({
   rideHeader: {
     marginBottom: 16,
   },
+  estimatedFareHeader: {
+    borderWidth: 1, // you probably want border *width*
+    borderColor: "#10b981",
+    backgroundColor: "#d1fae5", // light green background that pairs with #10b981
+    color: "black", // text color
+    padding: 10, // optional: gives some spacing inside
+    borderRadius: 8, // optional: rounded corners look nice
+    marginBottom: 10,
+  },
   rideId: {
     fontSize: 16,
     fontWeight: "600",
@@ -390,6 +405,9 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
+  },
+  setPriceButtonDisabled: {
+    opacity: 0.5,
   },
   emptyState: {
     alignItems: "center",

@@ -15,6 +15,7 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { useSelector } from "react-redux";
 import socket from "../../socket";
+import { useRouter } from "expo-router";
 
 const { width, height } = Dimensions.get("window");
 
@@ -23,23 +24,50 @@ const VEHICLE_TYPES = [
     id: "bike",
     name: "Bike",
     icon: "🏍️",
-    price: "PKR 50-80",
-    eta: "5-10 min",
     description: "Quick & affordable",
+    pricePerKm: 50,
   },
   {
     id: "car",
     name: "Car",
     icon: "🚗",
-    price: "PKR 120-200",
-    eta: "8-15 min",
     description: "Comfortable ride",
+    pricePerKm: 160,
   },
 ];
+
+// Function to calculate distance between two coordinates using Haversine formula
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Radius of the Earth in kilometers
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = R * c; // Distance in kilometers
+  return distance;
+};
+
+// Function to format address from geocoding response
+const formatAddress = (addressObj) => {
+  const parts = [];
+  if (addressObj.name) parts.push(addressObj.name);
+  if (addressObj.street) parts.push(addressObj.street);
+  if (addressObj.city) parts.push(addressObj.city);
+  if (addressObj.district) parts.push(addressObj.district);
+  if (addressObj.region) parts.push(addressObj.region);
+
+  return parts.filter((part) => part).join(", ");
+};
 
 export default function RequestRideScreen({ navigation }) {
   const user = useSelector((state) => state.auth.user);
   const [location, setLocation] = useState(null);
+  const [pickupLocationName, setPickupLocationName] = useState(""); // Added pickup location name
   const [destination, setDestination] = useState("");
   const [destinationCoords, setDestinationCoords] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState("bike");
@@ -49,10 +77,43 @@ export default function RequestRideScreen({ navigation }) {
   const [rideStatus, setRideStatus] = useState("idle"); // idle, requesting, searching
   const [isSelectingDestination, setIsSelectingDestination] = useState(false);
   const [femaleDriverOnly, setFemaleDriverOnly] = useState(false);
-  console.log(rideStatus);
+  const [distance, setDistance] = useState(0);
+  const [fare, setFare] = useState(0);
+
+  const router = useRouter();
 
   const mapRef = useRef(null);
   const socketRef = useRef(null);
+
+  // Calculate fare when distance or vehicle type changes
+  useEffect(() => {
+    if (distance > 0) {
+      const selectedVehicleInfo = VEHICLE_TYPES.find(
+        (v) => v.id === selectedVehicle
+      );
+      const calculatedFare = Math.ceil(
+        distance * selectedVehicleInfo.pricePerKm
+      );
+      setFare(calculatedFare);
+    } else {
+      setFare(0);
+    }
+  }, [distance, selectedVehicle]);
+
+  // Calculate distance when both pickup and dropoff locations are available
+  useEffect(() => {
+    if (location && destinationCoords) {
+      const calculatedDistance = calculateDistance(
+        location.latitude,
+        location.longitude,
+        destinationCoords.latitude,
+        destinationCoords.longitude
+      );
+      setDistance(calculatedDistance);
+    } else {
+      setDistance(0);
+    }
+  }, [location, destinationCoords]);
 
   // Initialize socket connection
   useEffect(() => {
@@ -120,6 +181,31 @@ export default function RequestRideScreen({ navigation }) {
 
       setLocation(userLocation);
 
+      // Get pickup location name using reverse geocoding
+      try {
+        const addressResponse = await Location.reverseGeocodeAsync({
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+        });
+
+        if (addressResponse.length > 0) {
+          const formattedAddress = formatAddress(addressResponse[0]);
+          setPickupLocationName(
+            formattedAddress ||
+              `${userLocation.latitude.toFixed(4)}, ${userLocation.longitude.toFixed(4)}`
+          );
+        } else {
+          setPickupLocationName(
+            `${userLocation.latitude.toFixed(4)}, ${userLocation.longitude.toFixed(4)}`
+          );
+        }
+      } catch (error) {
+        console.error("Error getting pickup address:", error);
+        setPickupLocationName(
+          `${userLocation.latitude.toFixed(4)}, ${userLocation.longitude.toFixed(4)}`
+        );
+      }
+
       // Animate map to user's location
       if (mapRef.current) {
         mapRef.current.animateToRegion(userLocation, 1000);
@@ -153,9 +239,7 @@ export default function RequestRideScreen({ navigation }) {
       });
 
       if (addressResponse.length > 0) {
-        const address = addressResponse[0];
-        const formattedAddress =
-          `${address.name || ""} ${address.street || ""} ${address.city || ""}`.trim();
+        const formattedAddress = formatAddress(addressResponse[0]);
         setDestination(
           formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
         );
@@ -201,19 +285,6 @@ export default function RequestRideScreen({ navigation }) {
     setRideStatus("requesting");
 
     try {
-      console.log({
-        userId: user.id,
-        pickup: {
-          latitude: location.latitude,
-          longitude: location.longitude,
-        },
-        dropoff: {
-          latitude: destinationCoords.latitude.toString(),
-          longitude: destinationCoords.longitude.toString(),
-        },
-        vehicleType: selectedVehicle,
-      });
-      // return;
       const response = await fetch(
         "https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rides/request",
         {
@@ -227,13 +298,17 @@ export default function RequestRideScreen({ navigation }) {
             pickup: {
               latitude: location.latitude,
               longitude: location.longitude,
+              address: pickupLocationName, // Added pickup address
             },
             dropoff: {
               latitude: destinationCoords.latitude,
               longitude: destinationCoords.longitude,
+              address: destination, // Added dropoff address
             },
             vehicleType: selectedVehicle,
-            // femaleDriverOnly: femaleDriverOnly,
+            femaleDriverOnly: femaleDriverOnly,
+            distance: distance,
+            fare: fare,
           }),
         }
       );
@@ -241,11 +316,15 @@ export default function RequestRideScreen({ navigation }) {
       const data = await response.json();
       console.log(data);
 
-      if (response.ok) {
+      setRideStatus("idle");
+
+      if (data.success) {
         Alert.alert(
           "Ride Requested!",
           `Looking for nearby ${femaleDriverOnly ? "female " : ""}drivers. You'll be notified when a driver accepts your ride.`
         );
+
+        router.push("/fare-request");
       } else {
         throw new Error(data.message || "Failed to request ride");
       }
@@ -301,7 +380,7 @@ export default function RequestRideScreen({ navigation }) {
           <Marker
             coordinate={location}
             title="Your Location"
-            description="Pickup location"
+            description={pickupLocationName || "Pickup location"}
             pinColor="#0084ff"
           />
         )}
@@ -309,7 +388,7 @@ export default function RequestRideScreen({ navigation }) {
           <Marker
             coordinate={destinationCoords}
             title="Destination"
-            description="Drop-off location"
+            description={destination || "Drop-off location"}
             pinColor="#ff4444"
           />
         )}
@@ -334,6 +413,16 @@ export default function RequestRideScreen({ navigation }) {
 
       {/* Bottom Sheet */}
       <View style={styles.bottomSheet}>
+        {/* Pickup Location Display (Optional) */}
+        {pickupLocationName && (
+          <View style={styles.locationContainer}>
+            <View style={styles.pickupDot} />
+            <Text style={styles.locationText} numberOfLines={1}>
+              From: {pickupLocationName}
+            </Text>
+          </View>
+        )}
+
         {/* Destination Input */}
         <View style={styles.inputContainer}>
           <View style={styles.locationDot} />
@@ -353,6 +442,20 @@ export default function RequestRideScreen({ navigation }) {
             <Text style={styles.selectButtonText}>📍</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Distance and Fare Display */}
+        {distance > 0 && (
+          <View style={styles.fareContainer}>
+            <View style={styles.fareInfo}>
+              <Text style={styles.fareLabel}>Distance</Text>
+              <Text style={styles.fareValue}>{distance.toFixed(2)} km</Text>
+            </View>
+            <View style={styles.fareInfo}>
+              <Text style={styles.fareLabel}>Estimated Fare</Text>
+              <Text style={styles.fareValue}>Rs {fare}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Female Driver Toggle */}
         <View style={styles.toggleContainer}>
@@ -385,45 +488,20 @@ export default function RequestRideScreen({ navigation }) {
               <Text style={styles.vehicleName}>
                 {getSelectedVehicleInfo().name}
               </Text>
-              <Text style={styles.vehiclePrice}>
-                {getSelectedVehicleInfo().price}
+              <Text style={styles.vehicleRate}>
+                Rs {getSelectedVehicleInfo().pricePerKm}/km
               </Text>
             </View>
           </View>
-          <Text style={styles.vehicleEta}>{getSelectedVehicleInfo().eta}</Text>
         </TouchableOpacity>
 
         {/* Request Button */}
         <TouchableOpacity
-          // style={[
-
-          //   styles.requestButton,
-          //   (isLoading || rideStatus !== "idle") &&
-          //     styles.requestButtonDisabled,
-          // ]}
           style={[styles.requestButton]}
           onPress={handleRequestRide}
-          // disabled={isLoading || rideStatus !== "idle"}
         >
           <Text style={styles.requestButtonText}>{getRideStatusText()}</Text>
-
-          {/* {isLoading || rideStatus === "requesting" ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.requestButtonText}>{getRideStatusText()}</Text>
-          )} */}
         </TouchableOpacity>
-
-        {/* Status Message */}
-        {/* {rideStatus === "searching" && (
-          <View style={styles.statusContainer}>
-            <ActivityIndicator size="small" color="#0084ff" />
-            <Text style={styles.statusText}>
-              Finding the best {femaleDriverOnly ? "female " : ""}driver for
-              you...
-            </Text>
-          </View>
-        )} */}
       </View>
 
       {/* Vehicle Selection Modal */}
@@ -437,32 +515,42 @@ export default function RequestRideScreen({ navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Choose Vehicle</Text>
 
-            {VEHICLE_TYPES.map((vehicle) => (
-              <TouchableOpacity
-                key={vehicle.id}
-                style={[
-                  styles.vehicleOption,
-                  selectedVehicle === vehicle.id &&
-                    styles.vehicleOptionSelected,
-                ]}
-                onPress={() => {
-                  setSelectedVehicle(vehicle.id);
-                  setShowVehicleModal(false);
-                }}
-              >
-                <Text style={styles.vehicleOptionIcon}>{vehicle.icon}</Text>
-                <View style={styles.vehicleOptionInfo}>
-                  <Text style={styles.vehicleOptionName}>{vehicle.name}</Text>
-                  <Text style={styles.vehicleOptionDescription}>
-                    {vehicle.description}
-                  </Text>
-                </View>
-                <View style={styles.vehicleOptionPricing}>
-                  <Text style={styles.vehicleOptionPrice}>{vehicle.price}</Text>
-                  <Text style={styles.vehicleOptionEta}>{vehicle.eta}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
+            {VEHICLE_TYPES.map((vehicle) => {
+              const vehicleFare =
+                distance > 0 ? Math.ceil(distance * vehicle.pricePerKm) : 0;
+              return (
+                <TouchableOpacity
+                  key={vehicle.id}
+                  style={[
+                    styles.vehicleOption,
+                    selectedVehicle === vehicle.id &&
+                      styles.vehicleOptionSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedVehicle(vehicle.id);
+                    setShowVehicleModal(false);
+                  }}
+                >
+                  <Text style={styles.vehicleOptionIcon}>{vehicle.icon}</Text>
+                  <View style={styles.vehicleOptionInfo}>
+                    <Text style={styles.vehicleOptionName}>{vehicle.name}</Text>
+                    <Text style={styles.vehicleOptionDescription}>
+                      {vehicle.description}
+                    </Text>
+                  </View>
+                  <View style={styles.vehicleOptionPricing}>
+                    <Text style={styles.vehicleOptionPrice}>
+                      Rs {vehicle.pricePerKm}/km
+                    </Text>
+                    {distance > 0 && (
+                      <Text style={styles.vehicleOptionFare}>
+                        Total: Rs {vehicleFare}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
 
             <TouchableOpacity
               style={styles.modalCloseButton}
@@ -549,6 +637,29 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
   },
+  locationContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  pickupDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#10b981",
+    marginRight: 12,
+  },
+  locationText: {
+    flex: 1,
+    fontSize: 14,
+    color: "#64748b",
+  },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -575,6 +686,29 @@ const styles = StyleSheet.create({
   },
   selectButtonText: {
     fontSize: 20,
+  },
+  fareContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    backgroundColor: "#f0f9ff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#0084ff",
+  },
+  fareInfo: {
+    alignItems: "center",
+  },
+  fareLabel: {
+    fontSize: 14,
+    color: "#0369a1",
+    marginBottom: 4,
+  },
+  fareValue: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#0c4a6e",
   },
   toggleContainer: {
     flexDirection: "row",
@@ -626,6 +760,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#1e293b",
+  },
+  vehicleRate: {
+    fontSize: 14,
+    color: "#64748b",
+    marginTop: 2,
   },
   vehiclePrice: {
     fontSize: 14,
@@ -728,6 +867,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#1e293b",
+  },
+  vehicleOptionFare: {
+    fontSize: 14,
+    color: "#0084ff",
+    marginTop: 2,
+    fontWeight: "500",
   },
   vehicleOptionEta: {
     fontSize: 14,

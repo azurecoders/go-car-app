@@ -25,7 +25,7 @@ export default function Profile() {
 
   const handleStudentRegistration = () => {
     // Navigate to student registration page
-    router.push("/auth/user/student-registration");
+    router.push("/student-verification");
   };
 
   const ProfileCard = ({ children, title }) => (
