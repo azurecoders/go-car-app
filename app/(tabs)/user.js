@@ -10,6 +10,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Switch,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { useSelector } from "react-redux";
@@ -40,11 +41,14 @@ export default function RequestRideScreen({ navigation }) {
   const user = useSelector((state) => state.auth.user);
   const [location, setLocation] = useState(null);
   const [destination, setDestination] = useState("");
+  const [destinationCoords, setDestinationCoords] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState("bike");
   const [isLoading, setIsLoading] = useState(false);
   const [isRequestingLocation, setIsRequestingLocation] = useState(true);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [rideStatus, setRideStatus] = useState("idle"); // idle, requesting, searching
+  const [isSelectingDestination, setIsSelectingDestination] = useState(false);
+  const [femaleDriverOnly, setFemaleDriverOnly] = useState(false);
   console.log(rideStatus);
 
   const mapRef = useRef(null);
@@ -69,11 +73,6 @@ export default function RequestRideScreen({ navigation }) {
           ]
         );
       });
-
-      // socketRef.current.on("ride-declined", (data) => {
-      //   setRideStatus("searching");
-      //   // Continue searching for another driver
-      // });
 
       socketRef.current.on("no-drivers-available", () => {
         console.log("No drivers available socket");
@@ -136,9 +135,60 @@ export default function RequestRideScreen({ navigation }) {
     }
   };
 
+  const handleMapPress = async (event) => {
+    // Only allow when ride is idle
+    if (rideStatus !== "idle") return;
+
+    const { latitude, longitude } = event.nativeEvent.coordinate;
+    setDestinationCoords({ latitude, longitude });
+
+    // Show loading state while geocoding
+    setDestination("Getting address...");
+
+    try {
+      // Reverse geocoding to get address
+      const addressResponse = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+      });
+
+      if (addressResponse.length > 0) {
+        const address = addressResponse[0];
+        const formattedAddress =
+          `${address.name || ""} ${address.street || ""} ${address.city || ""}`.trim();
+        setDestination(
+          formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+        );
+      } else {
+        setDestination(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+      }
+    } catch (error) {
+      console.error("Error getting address:", error);
+      setDestination(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+    }
+
+    // Auto-disable selection mode and provide haptic feedback
+    setIsSelectingDestination(false);
+
+    // Optional: Add haptic feedback (if you have expo-haptics installed)
+    // Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const handleSelectDestination = () => {
+    setIsSelectingDestination(true);
+    // Alert.alert(
+    //   "Select Destination",
+    //   "Tap on the map to select your destination",
+    //   [{ text: "Cancel", onPress: () => setIsSelectingDestination(false) }]
+    // );
+  };
+
   const handleRequestRide = async () => {
-    if (!destination.trim()) {
-      Alert.alert("Destination Required", "Please enter your destination.");
+    if (!destination.trim() || !destinationCoords) {
+      Alert.alert(
+        "Destination Required",
+        "Please select your destination from the map."
+      );
       return;
     }
 
@@ -151,6 +201,19 @@ export default function RequestRideScreen({ navigation }) {
     setRideStatus("requesting");
 
     try {
+      console.log({
+        userId: user.id,
+        pickup: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+        },
+        dropoff: {
+          latitude: destinationCoords.latitude.toString(),
+          longitude: destinationCoords.longitude.toString(),
+        },
+        vehicleType: selectedVehicle,
+      });
+      // return;
       const response = await fetch(
         "https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rides/request",
         {
@@ -166,10 +229,11 @@ export default function RequestRideScreen({ navigation }) {
               longitude: location.longitude,
             },
             dropoff: {
-              latitude: "24.858357795942815",
-              longitude: "67.07619775494979",
+              latitude: destinationCoords.latitude,
+              longitude: destinationCoords.longitude,
             },
             vehicleType: selectedVehicle,
+            // femaleDriverOnly: femaleDriverOnly,
           }),
         }
       );
@@ -178,10 +242,9 @@ export default function RequestRideScreen({ navigation }) {
       console.log(data);
 
       if (response.ok) {
-        // setRideStatus("searching");
         Alert.alert(
           "Ride Requested!",
-          "Looking for nearby drivers. You'll be notified when a driver accepts your ride."
+          `Looking for nearby ${femaleDriverOnly ? "female " : ""}drivers. You'll be notified when a driver accepts your ride.`
         );
       } else {
         throw new Error(data.message || "Failed to request ride");
@@ -232,6 +295,7 @@ export default function RequestRideScreen({ navigation }) {
         showsUserLocation={true}
         showsMyLocationButton={true}
         followsUserLocation={true}
+        onPress={handleMapPress}
       >
         {location && (
           <Marker
@@ -241,7 +305,32 @@ export default function RequestRideScreen({ navigation }) {
             pinColor="#0084ff"
           />
         )}
+        {destinationCoords && (
+          <Marker
+            coordinate={destinationCoords}
+            title="Destination"
+            description="Drop-off location"
+            pinColor="#ff4444"
+          />
+        )}
       </MapView>
+
+      {/* Map Selection Overlay */}
+      {isSelectingDestination && (
+        <View style={styles.mapOverlay}>
+          <View style={styles.mapOverlayContent}>
+            <Text style={styles.mapOverlayText}>
+              Tap on the map to select destination
+            </Text>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setIsSelectingDestination(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Bottom Sheet */}
       <View style={styles.bottomSheet}>
@@ -254,7 +343,31 @@ export default function RequestRideScreen({ navigation }) {
             placeholderTextColor="#94a3b8"
             value={destination}
             onChangeText={setDestination}
-            editable={rideStatus === "idle"}
+            editable={false}
+          />
+          <TouchableOpacity
+            style={styles.selectButton}
+            onPress={handleSelectDestination}
+            disabled={rideStatus !== "idle"}
+          >
+            <Text style={styles.selectButtonText}>📍</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Female Driver Toggle */}
+        <View style={styles.toggleContainer}>
+          <View style={styles.toggleInfo}>
+            <Text style={styles.toggleTitle}>👩‍💼 Female Driver Only</Text>
+            <Text style={styles.toggleDescription}>
+              Request rides from female drivers only
+            </Text>
+          </View>
+          <Switch
+            value={femaleDriverOnly}
+            onValueChange={setFemaleDriverOnly}
+            disabled={rideStatus !== "idle"}
+            trackColor={{ false: "#e2e8f0", true: "#0084ff" }}
+            thumbColor={femaleDriverOnly ? "#fff" : "#f1f5f9"}
           />
         </View>
 
@@ -282,30 +395,35 @@ export default function RequestRideScreen({ navigation }) {
 
         {/* Request Button */}
         <TouchableOpacity
-          style={[
-            styles.requestButton,
-            (isLoading || rideStatus !== "idle") &&
-              styles.requestButtonDisabled,
-          ]}
+          // style={[
+
+          //   styles.requestButton,
+          //   (isLoading || rideStatus !== "idle") &&
+          //     styles.requestButtonDisabled,
+          // ]}
+          style={[styles.requestButton]}
           onPress={handleRequestRide}
-          disabled={isLoading || rideStatus !== "idle"}
+          // disabled={isLoading || rideStatus !== "idle"}
         >
-          {isLoading || rideStatus === "requesting" ? (
+          <Text style={styles.requestButtonText}>{getRideStatusText()}</Text>
+
+          {/* {isLoading || rideStatus === "requesting" ? (
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.requestButtonText}>{getRideStatusText()}</Text>
-          )}
+          )} */}
         </TouchableOpacity>
 
         {/* Status Message */}
-        {rideStatus === "searching" && (
+        {/* {rideStatus === "searching" && (
           <View style={styles.statusContainer}>
             <ActivityIndicator size="small" color="#0084ff" />
             <Text style={styles.statusText}>
-              Finding the best driver for you...
+              Finding the best {femaleDriverOnly ? "female " : ""}driver for
+              you...
             </Text>
           </View>
-        )}
+        )} */}
       </View>
 
       {/* Vehicle Selection Modal */}
@@ -378,6 +496,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#64748b",
   },
+  mapOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1,
+  },
+  mapOverlayContent: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 12,
+    margin: 20,
+    alignItems: "center",
+  },
+  mapOverlayText: {
+    fontSize: 16,
+    color: "#1e293b",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  cancelButton: {
+    backgroundColor: "#ef4444",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  cancelButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
   bottomSheet: {
     position: "absolute",
     bottom: 0,
@@ -402,7 +555,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f1f5f9",
     borderRadius: 12,
     paddingHorizontal: 16,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   locationDot: {
     width: 12,
@@ -416,6 +569,36 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     fontSize: 16,
     color: "#1e293b",
+  },
+  selectButton: {
+    padding: 8,
+  },
+  selectButtonText: {
+    fontSize: 20,
+  },
+  toggleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  toggleInfo: {
+    flex: 1,
+  },
+  toggleTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  toggleDescription: {
+    fontSize: 14,
+    color: "#64748b",
+    marginTop: 2,
   },
   vehicleSelector: {
     flexDirection: "row",

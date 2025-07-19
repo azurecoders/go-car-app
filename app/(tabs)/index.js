@@ -1,10 +1,12 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import Icon from "react-native-vector-icons/FontAwesome";
 import Fontisto from "@expo/vector-icons/Fontisto";
+import { useRouter } from "expo-router";
 
 const TabHome = () => {
+  const router = useRouter();
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Welcome to Authentication</Text>
@@ -28,7 +30,13 @@ const TabHome = () => {
         </LinearGradient>
         <LinearGradient colors={["#000000", "#434343"]} style={styles.techItem}>
           <Icon name="server" size={30} color="#fff" />
-          <Text style={styles.techText}>NodeJS API</Text>
+          <TouchableOpacity
+            onPress={() => {
+              router.push("/requests");
+            }}
+          >
+            <Text style={styles.techText}>NodeJS API</Text>
+          </TouchableOpacity>
         </LinearGradient>
       </View>
     </View>

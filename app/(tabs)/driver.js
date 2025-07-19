@@ -1,19 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSelector } from "react-redux";
 import socket from "../../socket";
 
-export default function DriverRides() {
+export default function DriverRideRequests() {
   const driver = useSelector((state) => state.auth.user);
-  const [rides, setRides] = useState([]);
-  const [activeTab, setActiveTab] = useState("pending"); // pending, active, completed
+  const [rideRequests, setRideRequests] = useState([]);
+  const [showPricingModal, setShowPricingModal] = useState(false);
+  const [selectedRide, setSelectedRide] = useState(null);
+  const [proposedFare, setProposedFare] = useState("");
 
   const socketRef = useRef(null);
 
@@ -22,92 +26,97 @@ export default function DriverRides() {
     if (driver?.id) {
       socketRef.current = socket;
 
-      // Listen for ride events
-      socketRef.current.on("new-ride", (data) => {
-        console.log("New ride:", data);
+      // Listen for ride-request events
+      socketRef.current.on("ride-request", (data) => {
+        console.log("New ride request:", data);
+
+        const newRide = {
+          id: data.rideId,
+          driverId: data.driverId,
+          pickupLocation: data.pickupLocation,
+          dropoffLocation: data.dropoffLocation,
+          userName: data.userName,
+          userPhone: data.userPhone,
+        };
+
+        console.log("data", newRide);
+
+        setRideRequests((prevRides) => [newRide, ...prevRides]);
+
+        Alert.alert(
+          "New Ride Request",
+          `You have a new ride request from ${newRide.userName}`,
+          [{ text: "OK" }]
+        );
       });
 
       return () => {
+        socketRef.current?.off("ride-request");
         socketRef.current?.disconnect();
       };
     }
   }, [driver]);
 
-  // Mock data - replace with actual API call
-  useEffect(() => {
-    const mockRides = [
-      {
-        id: "R001",
-        userName: "Sarah Johnson",
-        userPhone: "+1 (555) 123-4567",
-        pickupLocation: "123 Main Street, Downtown",
-        dropoffLocation: "456 Oak Avenue, Uptown",
-        fare: 25.5,
-        distance: "8.2 km",
-        estimatedTime: "15 mins",
-        status: "pending",
-        requestTime: "2:30 PM",
-        rideType: "standard",
-      },
-      {
-        id: "R002",
-        userName: "Mike Chen",
-        userPhone: "+1 (555) 987-6543",
-        pickupLocation: "789 University Drive, Campus",
-        dropoffLocation: "321 Shopping Mall, West Side",
-        fare: 18.75,
-        distance: "6.1 km",
-        estimatedTime: "12 mins",
-        status: "active",
-        requestTime: "2:15 PM",
-        rideType: "student",
-      },
-      {
-        id: "R003",
-        userName: "Emma Wilson",
-        userPhone: "+1 (555) 456-7890",
-        pickupLocation: "555 Park Street, Central",
-        dropoffLocation: "888 Business District, East",
-        fare: 32.25,
-        distance: "11.5 km",
-        estimatedTime: "20 mins",
-        status: "completed",
-        requestTime: "1:45 PM",
-        completedTime: "2:25 PM",
-        rideType: "standard",
-      },
-      {
-        id: "R004",
-        userName: "Alex Rodriguez",
-        userPhone: "+1 (555) 321-9876",
-        pickupLocation: "777 Hotel Plaza, Tourist Area",
-        dropoffLocation: "999 Airport Terminal, South",
-        fare: 45.0,
-        distance: "18.3 km",
-        estimatedTime: "25 mins",
-        status: "pending",
-        requestTime: "2:45 PM",
-        rideType: "premium",
-      },
-    ];
-    setRides(mockRides);
-  }, []);
+  const formatLocation = (location) => {
+    if (typeof location === "string") return location;
 
-  const handleAcceptRide = (rideId) => {
-    Alert.alert("Accept Ride", "Are you sure you want to accept this ride?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Accept",
-        onPress: () => {
-          setRides((prevRides) =>
-            prevRides.map((ride) =>
-              ride.id === rideId ? { ...ride, status: "active" } : ride
-            )
-          );
-          setActiveTab("active");
+    if (
+      location &&
+      typeof location.lat === "number" &&
+      typeof location.lng === "number"
+    ) {
+      return `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+    }
+
+    return "Location not available";
+  };
+
+  const handleSetPrice = (ride) => {
+    setSelectedRide(ride);
+    setProposedFare("");
+    setShowPricingModal(true);
+  };
+
+  const submitPriceProposal = async () => {
+    if (!proposedFare || isNaN(proposedFare) || parseFloat(proposedFare) <= 0) {
+      Alert.alert("Invalid Price", "Please enter a valid fare amount");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/ride-price-proposal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      },
-    ]);
+        body: JSON.stringify({
+          rideId: selectedRide.id,
+          driverId: driver.id,
+          proposedFare: parseFloat(proposedFare),
+        }),
+      });
+
+      if (response.ok) {
+        // Remove the ride from requests after submitting price
+        setRideRequests((prevRides) =>
+          prevRides.filter((ride) => ride.id !== selectedRide.id)
+        );
+
+        setShowPricingModal(false);
+        setSelectedRide(null);
+        setProposedFare("");
+
+        Alert.alert("Success", "Your price proposal has been submitted!");
+      } else {
+        Alert.alert(
+          "Error",
+          "Failed to submit price proposal. Please try again."
+        );
+      }
+    } catch (error) {
+      console.error("Error submitting price:", error);
+      Alert.alert("Error", "Network error. Please try again.");
+    }
   };
 
   const handleRejectRide = (rideId) => {
@@ -117,7 +126,7 @@ export default function DriverRides() {
         text: "Reject",
         style: "destructive",
         onPress: () => {
-          setRides((prevRides) =>
+          setRideRequests((prevRides) =>
             prevRides.filter((ride) => ride.id !== rideId)
           );
         },
@@ -125,89 +134,10 @@ export default function DriverRides() {
     ]);
   };
 
-  const handleCompleteRide = (rideId) => {
-    Alert.alert("Complete Ride", "Mark this ride as completed?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Complete",
-        onPress: () => {
-          setRides((prevRides) =>
-            prevRides.map((ride) =>
-              ride.id === rideId
-                ? {
-                    ...ride,
-                    status: "completed",
-                    completedTime: new Date().toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }),
-                  }
-                : ride
-            )
-          );
-          setActiveTab("completed");
-        },
-      },
-    ]);
-  };
-
-  const filteredRides = rides.filter((ride) => ride.status === activeTab);
-
-  const getRideTypeColor = (rideType) => {
-    switch (rideType) {
-      case "student":
-        return "#10b981";
-      case "premium":
-        return "#f59e0b";
-      default:
-        return "#6b7280";
-    }
-  };
-
-  const getRideTypeLabel = (rideType) => {
-    switch (rideType) {
-      case "student":
-        return "Student";
-      case "premium":
-        return "Premium";
-      default:
-        return "Standard";
-    }
-  };
-
-  const TabButton = ({ title, isActive, onPress, count }) => (
-    <TouchableOpacity
-      style={[styles.tabButton, isActive && styles.activeTab]}
-      onPress={onPress}
-    >
-      <Text style={[styles.tabText, isActive && styles.activeTabText]}>
-        {title}
-      </Text>
-      {count > 0 && (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{count}</Text>
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-
-  const RideCard = ({ ride }) => (
+  const RideRequestCard = ({ ride }) => (
     <View style={styles.rideCard}>
       <View style={styles.rideHeader}>
-        <View style={styles.rideIdContainer}>
-          <Text style={styles.rideId}>#{ride.id}</Text>
-          <View
-            style={[
-              styles.rideTypeTag,
-              { backgroundColor: getRideTypeColor(ride.rideType) },
-            ]}
-          >
-            <Text style={styles.rideTypeText}>
-              {getRideTypeLabel(ride.rideType)}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.fareAmount}>${ride.fare.toFixed(2)}</Text>
+        <Text style={styles.rideId}>#{ride.id}</Text>
       </View>
 
       <View style={styles.userInfo}>
@@ -220,7 +150,9 @@ export default function DriverRides() {
           <View style={styles.locationDot} />
           <View style={styles.locationInfo}>
             <Text style={styles.locationLabel}>Pickup</Text>
-            <Text style={styles.locationText}>{ride.pickupLocation}</Text>
+            <Text style={styles.locationText}>
+              {formatLocation(ride.pickupLocation)}
+            </Text>
           </View>
         </View>
 
@@ -230,106 +162,100 @@ export default function DriverRides() {
           <View style={[styles.locationDot, styles.destinationDot]} />
           <View style={styles.locationInfo}>
             <Text style={styles.locationLabel}>Dropoff</Text>
-            <Text style={styles.locationText}>{ride.dropoffLocation}</Text>
+            <Text style={styles.locationText}>
+              {formatLocation(ride.dropoffLocation)}
+            </Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.rideDetails}>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Distance</Text>
-          <Text style={styles.detailValue}>{ride.distance}</Text>
-        </View>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Est. Time</Text>
-          <Text style={styles.detailValue}>{ride.estimatedTime}</Text>
-        </View>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Requested</Text>
-          <Text style={styles.detailValue}>{ride.requestTime}</Text>
-        </View>
-      </View>
-
-      {ride.completedTime && (
-        <View style={styles.completedInfo}>
-          <Text style={styles.completedText}>
-            Completed at {ride.completedTime}
-          </Text>
-        </View>
-      )}
-
       <View style={styles.actionButtons}>
-        {ride.status === "pending" && (
-          <>
-            <TouchableOpacity
-              style={styles.rejectButton}
-              onPress={() => handleRejectRide(ride.id)}
-            >
-              <Text style={styles.rejectButtonText}>Reject</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.acceptButton}
-              onPress={() => handleAcceptRide(ride.id)}
-            >
-              <Text style={styles.acceptButtonText}>Accept</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {ride.status === "active" && (
-          <TouchableOpacity
-            style={styles.completeButton}
-            onPress={() => handleCompleteRide(ride.id)}
-          >
-            <Text style={styles.completeButtonText}>Complete Ride</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.rejectButton}
+          onPress={() => handleRejectRide(ride.id)}
+        >
+          <Text style={styles.rejectButtonText}>Reject</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.setPriceButton}
+          onPress={() => handleSetPrice(ride)}
+        >
+          <Text style={styles.setPriceButtonText}>Set Price</Text>
+        </TouchableOpacity>
       </View>
     </View>
+  );
+
+  const PricingModal = () => (
+    <Modal
+      visible={showPricingModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowPricingModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Set Your Fare</Text>
+          <Text style={styles.modalSubtitle}>Ride #{selectedRide?.id}</Text>
+
+          <View style={styles.fareInputContainer}>
+            <Text style={styles.fareInputLabel}>Proposed Fare ($)</Text>
+            <TextInput
+              style={styles.fareInput}
+              value={proposedFare}
+              onChangeText={setProposedFare}
+              placeholder="Enter fare amount"
+              keyboardType="numeric"
+              autoFocus
+            />
+          </View>
+
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => {
+                setShowPricingModal(false);
+                setSelectedRide(null);
+                setProposedFare("");
+              }}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSubmitButton}
+              onPress={submitPriceProposal}
+            >
+              <Text style={styles.modalSubmitText}>Submit</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>My Rides</Text>
+        <Text style={styles.title}>Ride Requests</Text>
         <Text style={styles.subtitle}>Driver: {driver?.name}</Text>
-      </View>
-
-      <View style={styles.tabContainer}>
-        <TabButton
-          title="Pending"
-          isActive={activeTab === "pending"}
-          onPress={() => setActiveTab("pending")}
-          count={rides.filter((r) => r.status === "pending").length}
-        />
-        <TabButton
-          title="Active"
-          isActive={activeTab === "active"}
-          onPress={() => setActiveTab("active")}
-          count={rides.filter((r) => r.status === "active").length}
-        />
-        <TabButton
-          title="Completed"
-          isActive={activeTab === "completed"}
-          onPress={() => setActiveTab("completed")}
-          count={rides.filter((r) => r.status === "completed").length}
-        />
       </View>
 
       <ScrollView
         style={styles.ridesContainer}
         showsVerticalScrollIndicator={false}
       >
-        {filteredRides.length > 0 ? (
-          filteredRides.map((ride) => <RideCard key={ride.id} ride={ride} />)
+        {rideRequests.length > 0 ? (
+          rideRequests.map((ride) => (
+            <RideRequestCard key={ride.id} ride={ride} />
+          ))
         ) : (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>
-              No {activeTab} rides found
-            </Text>
+            <Text style={styles.emptyStateText}>No ride requests found</Text>
           </View>
         )}
       </ScrollView>
+
+      <PricingModal />
     </View>
   );
 }
@@ -357,53 +283,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#e0f2fe",
   },
-  tabContainer: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    marginHorizontal: 20,
-    marginTop: 20,
-    borderRadius: 12,
-    padding: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  tabButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 12,
-    borderRadius: 8,
-    position: "relative",
-  },
-  activeTab: {
-    backgroundColor: "#0084ff",
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#64748b",
-  },
-  activeTabText: {
-    color: "#fff",
-  },
-  badge: {
-    backgroundColor: "#ef4444",
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 6,
-  },
-  badgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-  },
   ridesContainer: {
     flex: 1,
     paddingHorizontal: 20,
@@ -421,35 +300,12 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   rideHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: 16,
-  },
-  rideIdContainer: {
-    flexDirection: "row",
-    alignItems: "center",
   },
   rideId: {
     fontSize: 16,
     fontWeight: "600",
     color: "#1e293b",
-    marginRight: 8,
-  },
-  rideTypeTag: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  rideTypeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  fareAmount: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#10b981",
   },
   userInfo: {
     marginBottom: 16,
@@ -505,42 +361,6 @@ const styles = StyleSheet.create({
     color: "#1e293b",
     lineHeight: 20,
   },
-  rideDetails: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
-  },
-  detailItem: {
-    alignItems: "center",
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#1e293b",
-  },
-  completedInfo: {
-    backgroundColor: "#f0f9ff",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  completedText: {
-    fontSize: 14,
-    color: "#0369a1",
-    fontWeight: "500",
-    textAlign: "center",
-  },
   actionButtons: {
     flexDirection: "row",
     gap: 12,
@@ -559,26 +379,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  acceptButton: {
+  setPriceButton: {
     flex: 1,
     backgroundColor: "#0084ff",
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: "center",
   },
-  acceptButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  completeButton: {
-    flex: 1,
-    backgroundColor: "#10b981",
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  completeButtonText: {
+  setPriceButtonText: {
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
@@ -592,5 +400,83 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#64748b",
     textAlign: "center",
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 24,
+    width: "85%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1e293b",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  fareInputContainer: {
+    marginBottom: 24,
+  },
+  fareInputLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1e293b",
+    marginBottom: 8,
+  },
+  fareInput: {
+    borderWidth: 2,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 18,
+    fontWeight: "600",
+    textAlign: "center",
+    backgroundColor: "#f8fafc",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    backgroundColor: "#f1f5f9",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  modalCancelText: {
+    color: "#64748b",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalSubmitButton: {
+    flex: 1,
+    backgroundColor: "#0084ff",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  modalSubmitText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });
