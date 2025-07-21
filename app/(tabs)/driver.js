@@ -1,7 +1,10 @@
+import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,8 +12,78 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import socket from "../../socket";
+
+const PricingModal = ({
+  showPricingModal,
+  setShowPricingModal,
+  selectedRide,
+  setSelectedRide,
+  proposedFare,
+  setProposedFare,
+  submitPriceProposal,
+}) => {
+  const textInputRef = useRef(null);
+
+  // Ensure focus is maintained after render
+  useEffect(() => {
+    if (showPricingModal && textInputRef.current) {
+      textInputRef.current.focus();
+    }
+  }, [showPricingModal]);
+
+  return (
+    <Modal
+      visible={showPricingModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowPricingModal(false)}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalOverlay}
+      >
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Set Your Fare</Text>
+
+          <View style={styles.fareInputContainer}>
+            <Text style={styles.fareInputLabel}>Proposed Fare (PKR)</Text>
+            <TextInput
+              ref={textInputRef}
+              style={styles.fareInput}
+              value={proposedFare}
+              onChangeText={setProposedFare}
+              placeholder="Enter fare amount"
+              keyboardType="numeric"
+              autoFocus={true}
+              returnKeyType="done"
+            />
+          </View>
+
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => {
+                setShowPricingModal(false);
+                setSelectedRide(null);
+                setProposedFare("");
+              }}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSubmitButton}
+              onPress={submitPriceProposal}
+            >
+              <Text style={styles.modalSubmitText}>Submit</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
 
 export default function DriverRideRequests() {
   const driver = useSelector((state) => state.auth.user);
@@ -18,52 +91,79 @@ export default function DriverRideRequests() {
   const [showPricingModal, setShowPricingModal] = useState(false);
   const [selectedRide, setSelectedRide] = useState(null);
   const [proposedFare, setProposedFare] = useState("");
+  const pollingRidesRef = useRef(new Map()); // Ref to track polling intervals
+  const hasNavigatedRef = useRef(new Set()); // Track navigated rideIds to prevent duplicates
 
   const socketRef = useRef(null);
+  const router = useRouter();
+  const dispatch = useDispatch();
 
-  // Initialize socket connection
-  useEffect(() => {
-    if (driver?.id) {
-      socketRef.current = socket;
+  // Function to poll ride status
+  const pollRideStatus = (rideId) => {
+    if (
+      pollingRidesRef.current.has(rideId) ||
+      hasNavigatedRef.current.has(rideId)
+    )
+      return; // Avoid duplicate polling or polling for navigated rides
 
-      // Listen for ride-request events
-      socketRef.current.on("ride-request", (data) => {
-        console.log("New ride request:", data);
-
-        const newRide = {
-          id: data.rideId,
-          driverId: data.driverId,
-          pickupLocation: data.pickupLocation,
-          dropoffLocation: data.dropoffLocation,
-          userName: data.userName,
-          userPhone: data.userPhone,
-          femaleDriverOnly: data.femaleDriverOnly,
-          driverGender: data.driverGender,
-          fare: data.fare,
-        };
-
-        setRideRequests((prevRides) => [newRide, ...prevRides]);
-
-        Alert.alert(
-          "New Ride Request",
-          `You have a new ride request from ${newRide.userName}`,
-          [{ text: "OK" }]
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(
+          `https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rides/check-ride-status?driverId=${driver.id}&rideId=${rideId}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
         );
-      });
 
-      return () => {
-        socketRef.current?.off("ride-request");
-        socketRef.current?.disconnect();
-      };
-    }
-  }, [driver]);
+        const data = await response.json();
+        console.log(`Poll result for ride ${rideId}:`, data);
 
-  const handleSetPrice = (ride) => {
-    setSelectedRide(ride);
-    setProposedFare("");
-    setShowPricingModal(true);
+        if (response.ok && data.status === "in_progress") {
+          // Immediately clear the interval
+          clearInterval(interval);
+          pollingRidesRef.current.delete(rideId);
+
+          // Prevent duplicate navigation
+          if (!hasNavigatedRef.current.has(rideId)) {
+            hasNavigatedRef.current.add(rideId);
+
+            // Navigate to track-ride-screen
+            router.push({
+              pathname: `/track-ride-screen`,
+              params: {
+                rideRoom: data.rideRoom,
+                rideId: data.rideId,
+                pickupLat: data.pickupLocation.lat,
+                pickupLng: data.pickupLocation.lng,
+                dropoffLat: data.dropoffLocation.lat,
+                dropoffLng: data.dropoffLocation.lng,
+                userName: data.userName,
+                userPhone: data.userPhone,
+                driverName: data.driverName,
+                driverPhone: data.driverPhone,
+                licensePlate: data.licensePlate,
+                fare: String(data.fare),
+              },
+            });
+
+            // Remove ride from requests
+            setRideRequests((prev) =>
+              prev.filter((ride) => ride.id !== rideId)
+            );
+          }
+        }
+      } catch (error) {
+        console.error(`Error polling ride ${rideId}:`, error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    pollingRidesRef.current.set(rideId, interval);
   };
 
+  // Handle fare proposal submission
   const submitPriceProposal = async () => {
     if (!proposedFare || isNaN(proposedFare) || parseFloat(proposedFare) <= 0) {
       Alert.alert("Invalid Price", "Please enter a valid fare amount");
@@ -87,15 +187,10 @@ export default function DriverRideRequests() {
       );
 
       if (response.ok) {
-        // Remove the ride from requests after submitting price
-        setRideRequests((prevRides) =>
-          prevRides.filter((ride) => ride.id !== selectedRide.id)
-        );
-
         setShowPricingModal(false);
         setSelectedRide(null);
         setProposedFare("");
-
+        pollRideStatus(selectedRide.id);
         Alert.alert("Success", "Your price proposal has been submitted!");
       } else {
         Alert.alert(
@@ -107,6 +202,112 @@ export default function DriverRideRequests() {
       console.error("Error submitting price:", error);
       Alert.alert("Error", "Network error. Please try again.");
     }
+  };
+
+  // Initialize socket connection (kept as fallback)
+  useEffect(() => {
+    if (driver?.id) {
+      socketRef.current = socket;
+
+      const registerDriver = () => {
+        socketRef.current.emit("driver-join", { driverId: driver.id });
+        console.log(
+          "Driver joined with ID:",
+          driver.id,
+          "Socket ID:",
+          socketRef.current.id
+        );
+      };
+
+      // Initial registration
+      registerDriver();
+
+      socketRef.current.on("connect", () => {
+        console.log("Socket connected:", socketRef.current.id);
+        registerDriver(); // Re-register on reconnect
+      });
+
+      socketRef.current.on("ride-accepted", (data) => {
+        console.log("Received ride-accepted event:", data);
+        // Stop polling if active
+        if (pollingRidesRef.current.has(data.rideId)) {
+          clearInterval(pollingRidesRef.current.get(data.rideId));
+          pollingRidesRef.current.delete(data.rideId);
+        }
+        // Prevent duplicate navigation
+        if (!hasNavigatedRef.current.has(data.rideId)) {
+          hasNavigatedRef.current.add(data.rideId);
+          router.push({
+            pathname: `/track-ride-screen`,
+            params: {
+              rideRoom: `ride_${data.rideId}`,
+              rideId: data.rideId,
+              pickupLat: data.pickupLocation.lat,
+              pickupLng: data.pickupLocation.lng,
+              dropoffLat: data.dropoffLocation.lat,
+              dropoffLng: data.dropoffLocation.lng,
+              userName: data.userName,
+              userPhone: data.userPhone,
+              driverName: data.driverName,
+              driverPhone: data.driverPhone,
+              licensePlate:
+                data.driver?.vehicleInfo?.licensePlate || data.licensePlate,
+              fare: String(data.fare),
+            },
+          });
+          // Remove ride from requests
+          setRideRequests((prev) =>
+            prev.filter((ride) => ride.id !== data.rideId)
+          );
+        }
+      });
+
+      socketRef.current.on("ride-request", (data) => {
+        console.log("New ride request:", data);
+        const newRide = {
+          id: data.rideId,
+          driverId: data.driverId,
+          pickupLocation: data.pickupLocation,
+          dropoffLocation: data.dropoffLocation,
+          userName: data.userName,
+          userPhone: data.userPhone,
+          femaleDriverOnly: data.femaleDriverOnly,
+          driverGender: data.driverGender,
+          fare: data.fare,
+        };
+        setRideRequests((prevRides) => [newRide, ...prevRides]);
+        Alert.alert(
+          "New Ride Request",
+          `You have a new ride request from ${newRide.userName}`,
+          [{ text: "OK" }]
+        );
+      });
+
+      socketRef.current.on("disconnect", () => {
+        console.log("Socket disconnected:", socketRef.current.id);
+      });
+
+      socketRef.current.on("connect_error", (error) => {
+        console.log("Socket connection error:", error.message);
+      });
+
+      return () => {
+        socketRef.current?.off("ride-request");
+        socketRef.current?.off("ride-accepted");
+        socketRef.current?.off("connect");
+        socketRef.current?.off("disconnect");
+        socketRef.current?.off("connect_error");
+        // Clean up all polling intervals
+        pollingRidesRef.current.forEach((interval) => clearInterval(interval));
+        pollingRidesRef.current.clear();
+      };
+    }
+  }, [driver]); // Removed pollingRides from dependencies
+
+  const handleSetPrice = (ride) => {
+    setSelectedRide(ride);
+    setProposedFare("");
+    setShowPricingModal(true);
   };
 
   const handleRejectRide = (rideId) => {
@@ -126,9 +327,6 @@ export default function DriverRideRequests() {
 
   const RideRequestCard = ({ ride }) => (
     <View style={styles.rideCard}>
-      <View style={styles.rideHeader}>
-        <Text style={styles.rideId}>#{ride.id}</Text>
-      </View>
       <View style={styles.estimatedFareHeader}>
         <Text style={styles.rideId}>
           <Text style={{ fontWeight: "bold" }}>Estimated Fare:</Text>{" "}
@@ -169,6 +367,15 @@ export default function DriverRideRequests() {
         </View>
       </View>
 
+      <View style={{ marginTop: 10, marginBottom: 10 }}>
+        {ride.femaleDriverOnly && ride.driverGender !== "female" && (
+          <Text style={{ color: "#ff3333" }}>
+            <Text style={{ fontWeight: "bold" }}>Note:</Text> Only females are
+            allowed to drive this ride.
+          </Text>
+        )}
+      </View>
+
       <View style={styles.actionButtons}>
         <TouchableOpacity
           style={styles.rejectButton}
@@ -192,53 +399,6 @@ export default function DriverRideRequests() {
     </View>
   );
 
-  const PricingModal = () => (
-    <Modal
-      visible={showPricingModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowPricingModal(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Set Your Fare</Text>
-          <Text style={styles.modalSubtitle}>Ride #{selectedRide?.id}</Text>
-
-          <View style={styles.fareInputContainer}>
-            <Text style={styles.fareInputLabel}>Proposed Fare ($)</Text>
-            <TextInput
-              style={styles.fareInput}
-              value={proposedFare}
-              onChangeText={setProposedFare}
-              placeholder="Enter fare amount"
-              keyboardType="numeric"
-              autoFocus
-            />
-          </View>
-
-          <View style={styles.modalButtons}>
-            <TouchableOpacity
-              style={styles.modalCancelButton}
-              onPress={() => {
-                setShowPricingModal(false);
-                setSelectedRide(null);
-                setProposedFare("");
-              }}
-            >
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalSubmitButton}
-              onPress={submitPriceProposal}
-            >
-              <Text style={styles.modalSubmitText}>Submit</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -249,6 +409,7 @@ export default function DriverRideRequests() {
       <ScrollView
         style={styles.ridesContainer}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {rideRequests.length > 0 ? (
           rideRequests.map((ride) => (
@@ -261,11 +422,20 @@ export default function DriverRideRequests() {
         )}
       </ScrollView>
 
-      <PricingModal />
+      <PricingModal
+        showPricingModal={showPricingModal}
+        setShowPricingModal={setShowPricingModal}
+        selectedRide={selectedRide}
+        setSelectedRide={setSelectedRide}
+        proposedFare={proposedFare}
+        setProposedFare={setProposedFare}
+        submitPriceProposal={submitPriceProposal}
+      />
     </View>
   );
 }
 
+// Styles remain the same as in your original code
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -309,12 +479,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   estimatedFareHeader: {
-    borderWidth: 1, // you probably want border *width*
+    borderWidth: 1,
     borderColor: "#10b981",
-    backgroundColor: "#d1fae5", // light green background that pairs with #10b981
-    color: "black", // text color
-    padding: 10, // optional: gives some spacing inside
-    borderRadius: 8, // optional: rounded corners look nice
+    backgroundColor: "#d1fae5",
+    color: "black",
+    padding: 10,
+    borderRadius: 8,
     marginBottom: 10,
   },
   rideId: {
@@ -419,7 +589,6 @@ const styles = StyleSheet.create({
     color: "#64748b",
     textAlign: "center",
   },
-  // Modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.5)",

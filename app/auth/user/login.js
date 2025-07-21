@@ -35,7 +35,7 @@ const LoginScreen = () => {
 
   useEffect(() => {
     if (user) {
-      router.push("/(tabs)/profile");
+      router.push("/(tabs)");
     }
   }, [user]);
 
@@ -67,10 +67,14 @@ const LoginScreen = () => {
         socket.connect();
         socket.emit("user-join", { userId: data.user.id });
         Alert.alert("Success", data.message, [
-          { text: "OK", onPress: () => router.push("/(tabs)/profile") },
+          { text: "OK", onPress: () => router.push("/(tabs)") },
         ]);
       })
       .catch((e) => console.log(e));
+  };
+
+  const handleDriverModeSwitch = () => {
+    router.push("/auth/driver/login");
   };
 
   return (
@@ -93,6 +97,21 @@ const LoginScreen = () => {
             <Text style={styles.subtitle}>
               Sign in to continue your journey
             </Text>
+          </View>
+
+          {/* Mode Switch Section */}
+          <View style={styles.modeSwitchContainer}>
+            <View style={styles.modeIndicator}>
+              <Text style={styles.modeText}>👤 User Mode</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.driverModeButton}
+              onPress={handleDriverModeSwitch}
+            >
+              <Text style={styles.driverModeButtonText}>
+                🚗 Switch to Driver
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Login Form */}
@@ -185,7 +204,7 @@ const styles = StyleSheet.create({
   },
   headerSection: {
     alignItems: "center",
-    marginBottom: 48,
+    marginBottom: 32,
   },
   appName: {
     fontSize: 42,
@@ -205,6 +224,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666666",
     textAlign: "center",
+  },
+  modeSwitchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 32,
+    paddingHorizontal: 4,
+  },
+  modeIndicator: {
+    backgroundColor: "#E3F2FD",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#0084ff",
+  },
+  modeText: {
+    color: "#0084ff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  driverModeButton: {
+    backgroundColor: "#F0F0F0",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#CCCCCC",
+  },
+  driverModeButtonText: {
+    color: "#666666",
+    fontSize: 14,
+    fontWeight: "500",
   },
   formContainer: {
     backgroundColor: "#FFFFFF",

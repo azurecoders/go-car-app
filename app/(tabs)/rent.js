@@ -1,26 +1,25 @@
-import React, { useState, useEffect } from "react";
+import axios from "axios";
+import React, { useEffect, useState } from "react";
 import {
+  Alert,
+  FlatList,
+  Image,
+  Linking,
   StyleSheet,
   Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Image,
   TextInput,
-  FlatList,
-  Alert,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useSelector } from "react-redux";
-import { useRouter } from "expo-router";
-import axios from "axios";
 
 export default function RentalListings() {
-  const router = useRouter();
   const user = useSelector((state) => state.auth.user);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("all");
   const [rentals, setRentals] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [availableCategories, setAvailableCategories] = useState([]);
 
   const FetchAllRents = async () => {
     try {
@@ -28,7 +27,21 @@ export default function RentalListings() {
         "https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rent"
       );
       const data = response.data;
-      setRentals(data.rent);
+      console.log(data);
+      setRentals(data.rents);
+
+      // Extract unique categories preserving original case
+      const categoryMap = new Map();
+      data.rents
+        ?.filter((rent) => rent.status === "active" && rent.category)
+        .forEach((rent) => {
+          const lowerCategory = rent.category.toLowerCase();
+          if (!categoryMap.has(lowerCategory)) {
+            categoryMap.set(lowerCategory, rent.category); // Store original case
+          }
+        });
+
+      setAvailableCategories(Array.from(categoryMap.entries()));
       setLoading(false);
     } catch (error) {
       console.error("Error fetching rentals:", error);
@@ -41,27 +54,49 @@ export default function RentalListings() {
   }, []);
 
   const filteredRentals = rentals?.filter((rental) => {
+    // Only show active rentals
+    if (rental?.status !== "active") return false;
+
     const matchesSearch =
-      rental.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rental.location.toLowerCase().includes(searchQuery.toLowerCase());
+      rental?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      rental?.location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      rental?.description?.toLowerCase().includes(searchQuery.toLowerCase());
+
     const matchesFilter =
-      selectedFilter === "all" || rental.type === selectedFilter;
+      selectedFilter === "all" ||
+      rental?.category?.toLowerCase() === selectedFilter;
+
     return matchesSearch && matchesFilter;
   });
-
-  const handleRentalPress = (rental) => {
-    // Navigate to rental details page
-    router.push(`/rental-details/${rental.id}`);
-  };
 
   const handleContactOwner = (rental) => {
     Alert.alert(
       "Contact Owner",
-      `Would you like to contact ${rental.owner} about this ${rental.type}?`,
+      `Would you like to contact the owner about this ${rental?.category}?`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Call", onPress: () => router.push(`/ad`) },
-        { text: "Message", onPress: () => console.log("Messaging owner") },
+        {
+          text: "Call",
+          onPress: () => {
+            const phoneNumber = rental?.user?.phone;
+            if (phoneNumber) {
+              Linking.openURL(`tel:${phoneNumber}`);
+            } else {
+              Alert.alert("Error", "Phone number not available.");
+            }
+          },
+        },
+        {
+          text: "Message",
+          onPress: () => {
+            const phoneNumber = rental?.user?.phone;
+            if (phoneNumber) {
+              Linking.openURL(`sms:${phoneNumber}`);
+            } else {
+              Alert.alert("Error", "Phone number not available.");
+            }
+          },
+        },
       ]
     );
   };
@@ -82,71 +117,75 @@ export default function RentalListings() {
     </TouchableOpacity>
   );
 
-  const RentalCard = ({ rental }) => (
-    <TouchableOpacity
-      style={styles.rentalCard}
-      onPress={() => handleRentalPress(rental)}
-    >
-      <View style={styles.imageContainer}>
-        <Image source={{ uri: rental.image }} style={styles.rentalImage} />
-        <View style={styles.typeTag}>
-          <Text style={styles.typeTagText}>{rental.type.toUpperCase()}</Text>
-        </View>
-        {!rental.available && (
-          <View style={styles.unavailableOverlay}>
-            <Text style={styles.unavailableText}>Not Available</Text>
-          </View>
-        )}
-      </View>
+  const RentalCard = ({ rental }) => {
+    const originalPrice =
+      typeof rental?.price === "string"
+        ? parseFloat(rental?.price)
+        : rental?.price;
+    const isStudent = user?.isStudent === true;
+    const discountedPrice = isStudent ? originalPrice * 0.9 : originalPrice;
 
-      <View style={styles.cardContent}>
-        <Text style={styles.rentalTitle}>{rental.title}</Text>
-        <Text style={styles.rentalLocation}>📍 {rental.location}</Text>
-
-        <View style={styles.ratingContainer}>
-          <Text style={styles.rating}>⭐ {rental.rating}</Text>
-          <Text style={styles.reviews}>({rental.reviews} reviews)</Text>
-        </View>
-
-        <View style={styles.featuresContainer}>
-          {rental.features.slice(0, 3).map((feature, index) => (
-            <View key={index} style={styles.featureTag}>
-              <Text style={styles.featureText}>{feature}</Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.detailsRow}>
-          <Text style={styles.detailText}>
-            {rental.type === "car"
-              ? `${rental.seats} seats`
-              : `${rental.engine}`}
-          </Text>
-          <Text style={styles.detailText}>• {rental.transmission}</Text>
-          <Text style={styles.detailText}>• {rental.fuel}</Text>
-        </View>
-
-        <View style={styles.bottomRow}>
-          <View style={styles.priceContainer}>
-            <Text style={styles.price}>Rs {rental.price.toLocaleString()}</Text>
-            <Text style={styles.priceType}>per {rental.priceType}</Text>
-          </View>
-          <TouchableOpacity
-            style={[
-              styles.contactButton,
-              !rental.available && styles.contactButtonDisabled,
-            ]}
-            onPress={() => handleContactOwner(rental)}
-            disabled={!rental.available}
-          >
-            <Text style={styles.contactButtonText}>
-              {rental.available ? "Contact" : "Unavailable"}
+    return (
+      <TouchableOpacity
+        style={styles.rentalCard}
+        // onPress={() => handleRentalPress(rental)}
+      >
+        <View style={styles.imageContainer}>
+          <Image
+            source={{ uri: rental?.imageUrl }}
+            style={styles.rentalImage}
+          />
+          <View style={styles.typeTag}>
+            <Text style={styles.typeTagText}>
+              {rental?.category?.toUpperCase()}
             </Text>
-          </TouchableOpacity>
+          </View>
+          {rental?.status !== "active" && (
+            <View style={styles.unavailableOverlay}>
+              <Text style={styles.unavailableText}>Not Available</Text>
+            </View>
+          )}
         </View>
-      </View>
-    </TouchableOpacity>
-  );
+
+        <View style={styles.cardContent}>
+          <Text style={styles.rentalTitle}>{rental?.title}</Text>
+          <Text style={styles.rentalLocation}>📍 {rental?.location}</Text>
+
+          <Text style={styles.rentalDescription} numberOfLines={2}>
+            {rental?.description}
+          </Text>
+
+          <View style={styles.bottomRow}>
+            <View style={styles.priceContainer}>
+              {isStudent && (
+                <Text style={styles.originalPrice}>
+                  Rs {originalPrice?.toLocaleString()}
+                </Text>
+              )}
+              <Text style={styles.price}>
+                Rs {discountedPrice?.toLocaleString()}
+                {isStudent && (
+                  <Text style={styles.discountText}> (10% off)</Text>
+                )}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.contactButton,
+                rental?.status !== "active" && styles.contactButtonDisabled,
+              ]}
+              onPress={() => handleContactOwner(rental)}
+              disabled={rental?.status !== "active" || user.role !== "user"}
+            >
+              <Text style={styles.contactButtonText}>
+                {rental?.status === "active" ? "Contact" : "Unavailable"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const LoadingCard = () => (
     <View style={styles.loadingCard}>
@@ -162,36 +201,16 @@ export default function RentalListings() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Vehicle Rentals</Text>
-        <Text style={styles.subtitle}>
-          Find the perfect ride for your needs
-        </Text>
+        <Text style={styles.title}>Rentals</Text>
+        <Text style={styles.subtitle}>Find what you need to rent</Text>
       </View>
 
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by vehicle or location..."
+          placeholder="Search by title, location, or description..."
           value={searchQuery}
           onChangeText={setSearchQuery}
-        />
-      </View>
-
-      <View style={styles.filterContainer}>
-        <FilterButton
-          title="All"
-          value="all"
-          isSelected={selectedFilter === "all"}
-        />
-        <FilterButton
-          title="Cars"
-          value="car"
-          isSelected={selectedFilter === "car"}
-        />
-        <FilterButton
-          title="Bikes"
-          value="bike"
-          isSelected={selectedFilter === "bike"}
         />
       </View>
 
@@ -199,14 +218,14 @@ export default function RentalListings() {
         <Text style={styles.resultsCount}>
           {loading
             ? "Loading..."
-            : `${filteredRentals?.length || 0} vehicles available`}
+            : `${filteredRentals?.length || 0} items available`}
         </Text>
       </View>
 
       <FlatList
         data={loading ? [1, 2, 3, 4, 5] : filteredRentals}
         keyExtractor={(item, index) =>
-          loading ? index.toString() : item.id.toString()
+          loading ? index?.toString() : item?._id?.toString()
         }
         renderItem={({ item }) =>
           loading ? <LoadingCard /> : <RentalCard rental={item} />
@@ -263,9 +282,12 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   filterContainer: {
-    flexDirection: "row",
-    paddingHorizontal: 20,
+    paddingLeft: 20,
     paddingBottom: 10,
+    maxHeight: 50,
+  },
+  filterContentContainer: {
+    paddingRight: 20,
     gap: 10,
   },
   filterButton: {
@@ -275,6 +297,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#e2e8f0",
+    minWidth: 60,
+    alignItems: "center",
   },
   filterButtonActive: {
     backgroundColor: "#0084ff",
@@ -363,46 +387,11 @@ const styles = StyleSheet.create({
     color: "#64748b",
     marginBottom: 8,
   },
-  ratingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  rating: {
+  rentalDescription: {
     fontSize: 14,
-    color: "#1e293b",
-    fontWeight: "500",
-  },
-  reviews: {
-    fontSize: 14,
-    color: "#64748b",
-    marginLeft: 4,
-  },
-  featuresContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 12,
-  },
-  featureTag: {
-    backgroundColor: "#f1f5f9",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  featureText: {
-    fontSize: 12,
     color: "#475569",
-    fontWeight: "500",
-  },
-  detailsRow: {
-    flexDirection: "row",
+    lineHeight: 20,
     marginBottom: 16,
-  },
-  detailText: {
-    fontSize: 12,
-    color: "#64748b",
-    marginRight: 8,
   },
   bottomRow: {
     flexDirection: "row",
@@ -410,18 +399,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   priceContainer: {
-    flexDirection: "row",
-    alignItems: "baseline",
+    flexDirection: "column", // Changed from "row"
+    alignItems: "flex-start", // Changed from "baseline"
   },
   price: {
     fontSize: 18,
     fontWeight: "700",
     color: "#0084ff",
-  },
-  priceType: {
-    fontSize: 12,
-    color: "#64748b",
-    marginLeft: 4,
   },
   contactButton: {
     backgroundColor: "#0084ff",
@@ -461,5 +445,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#e2e8f0",
     borderRadius: 6,
     marginBottom: 8,
+  },
+  originalPrice: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#94a3b8",
+    textDecorationLine: "line-through",
+    marginRight: 8,
+  },
+  discountText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#10b981",
   },
 });

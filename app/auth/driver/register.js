@@ -43,7 +43,7 @@ const SignupScreen = () => {
 
   useEffect(() => {
     if (user) {
-      router.push("/(tabs)/profile");
+      router.push("/(tabs)");
     }
   }, [user]);
 
@@ -101,7 +101,7 @@ const SignupScreen = () => {
         socket.connect();
         socket.emit("driver-join", { driverId: data.user.id });
         Alert.alert("Success", data.message, [
-          { text: "OK", onPress: () => router.push("/(tabs)/profile") },
+          { text: "OK", onPress: () => router.push("/(tabs)/driver") },
         ]);
       })
       .catch((e) => console.log(e));
@@ -117,6 +117,10 @@ const SignupScreen = () => {
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleUserModeSwitch = () => {
+    router.push("/auth/user/register");
   };
 
   const vehicleTypes = [
@@ -144,6 +148,19 @@ const SignupScreen = () => {
             <Text style={styles.subtitle}>
               Register as a driver and start earning with us
             </Text>
+          </View>
+
+          {/* Mode Switch Section */}
+          <View style={styles.modeSwitchContainer}>
+            <TouchableOpacity
+              style={styles.userModeButton}
+              onPress={handleUserModeSwitch}
+            >
+              <Text style={styles.userModeButtonText}>👤 Switch to User</Text>
+            </TouchableOpacity>
+            <View style={styles.modeIndicator}>
+              <Text style={styles.modeText}>🚗 Driver Mode</Text>
+            </View>
           </View>
 
           {/* Signup Form */}
@@ -363,7 +380,7 @@ const styles = StyleSheet.create({
   },
   headerSection: {
     alignItems: "center",
-    marginBottom: 48,
+    marginBottom: 32,
   },
   appName: {
     fontSize: 42,
@@ -383,6 +400,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666666",
     textAlign: "center",
+  },
+  modeSwitchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 32,
+    paddingHorizontal: 4,
+  },
+  modeIndicator: {
+    backgroundColor: "#E3F2FD",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#0084ff",
+  },
+  modeText: {
+    color: "#0084ff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  userModeButton: {
+    backgroundColor: "#F0F0F0",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#CCCCCC",
+  },
+  userModeButtonText: {
+    color: "#666666",
+    fontSize: 14,
+    fontWeight: "500",
   },
   formContainer: {
     backgroundColor: "#FFFFFF",

@@ -1,5 +1,7 @@
+import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   ScrollView,
@@ -7,7 +9,6 @@ import {
   Text,
   TouchableOpacity,
   View,
-  ActivityIndicator,
 } from "react-native";
 import { useSelector } from "react-redux";
 import socket from "../socket";
@@ -18,9 +19,9 @@ export default function UserFareProposals() {
   const [isLoading, setIsLoading] = useState(true);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState(null);
-  const [rideDetails, setRideDetails] = useState(null);
 
   const socketRef = useRef(null);
+  const router = useRouter();
 
   // Initialize socket connection and fetch initial data
   useEffect(() => {
@@ -72,18 +73,25 @@ export default function UserFareProposals() {
 
   const confirmAcceptProposal = async () => {
     try {
-      const response = await fetch("/api/accept-fare-proposal", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          proposalId: selectedProposal.id,
-          rideId: selectedProposal.rideId,
-          userId: user.id,
-          driverId: selectedProposal.driverId,
-        }),
-      });
+      const response = await fetch(
+        "https://d6elp5bdgrgthejqpor3ihwnsu.srv.us/api/rides/accept-fare-proposal",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            proposalId: selectedProposal.id,
+            rideId: selectedProposal.rideId,
+            userId: user.id,
+            driverId: selectedProposal.driverId,
+            fare: selectedProposal.proposedFare,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      console.log("Data on fare-request page", data);
 
       if (response.ok) {
         setShowConfirmModal(false);
@@ -91,9 +99,27 @@ export default function UserFareProposals() {
 
         Alert.alert(
           "Ride Confirmed!",
-          `Your ride with ${selectedProposal.driverName} has been confirmed. They will arrive in ${selectedProposal.estimatedArrival}.`,
-          [{ text: "OK" }]
+          `Your ride with ${selectedProposal.driverName} has been confirmed.`,
+          [{ text: "OK", onPress: () => {} }]
         );
+
+        router.push({
+          pathname: `/track-ride-screen`,
+          params: {
+            rideRoom: data.rideRoom,
+            rideId: data.rideId,
+            pickupLat: data.pickupLocation.lat,
+            pickupLng: data.pickupLocation.lng,
+            dropoffLat: data.dropoffLocation.lat,
+            dropoffLng: data.dropoffLocation.lng,
+            userName: data.userName,
+            userPhone: data.userPhone,
+            driverName: data.driverName,
+            driverPhone: data.driverPhone,
+            licensePlate: data.licensePlate,
+            fare: String(data.fare),
+          },
+        });
 
         // Clear all proposals as ride is now confirmed
         setFareProposals([]);
